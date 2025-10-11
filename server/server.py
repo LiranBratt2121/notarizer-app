@@ -6,7 +6,6 @@
 
 import io
 import os
-import json
 import imagehash
 import motor.motor_asyncio
 import numpy as np
@@ -110,7 +109,7 @@ async def validate_image(file: UploadFile = File(...)):
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = os.path.join(UPLOAD_DIR, f"cropped_{timestamp}.jpg")
-        cropped.save(output_path)
+        # cropped.save(output_path)
 
         resized = cropped.resize((HASH_SIZE * 2, HASH_SIZE * 2), Image.Resampling.LANCZOS)
         hash_to_check = imagehash.phash(resized, hash_size=HASH_SIZE)
