@@ -28,7 +28,7 @@ MONGO_DETAILS = os.getenv(
 DATABASE_NAME = "image_validation_db"
 COLLECTION_NAME = "valid_images"
 UPLOAD_DIR = "uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+# os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 HASH_SIZE = 8
 
