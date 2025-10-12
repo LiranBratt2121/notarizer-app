@@ -35,7 +35,7 @@ MONGO_DETAILS = os.getenv(
 
 DATABASE_NAME = "image_validation_db"
 COLLECTION_NAME = "valid_images"
-HASH_SIZE = 8
+HASH_SIZE = 16
 
 # --- Initialize MongoDB ---
 logger.info("🔌 Connecting to MongoDB...")
@@ -149,7 +149,7 @@ def create_difference_visualization(
     # Convert difference to grayscale (max channel difference)
     diff_gray = np.max(diff, axis=2)
 
-    # Threshold to find significant differences (Difference greater than 30 is considered a mismatch)
+    # Threshold to find significant differences (Difference greater than 15 is considered a mismatch)
     THRESHOLD = 15
     diff_mask = diff_gray > THRESHOLD
 
@@ -280,7 +280,7 @@ async def validate_image(file: UploadFile = File(...)):
                 f"  Comparing with {valid_doc.get('filename', 'Unknown')} - Distance: {distance}"
             )
 
-            if distance <= 5 and distance < min_distance:
+            if distance <= 25 and distance < min_distance:
                 min_distance = distance
                 matched_doc = valid_doc
                 logger.info(f"  ✅ Match found! Distance: {distance}")
