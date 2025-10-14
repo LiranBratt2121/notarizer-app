@@ -280,7 +280,7 @@ async def validate_image(file: UploadFile = File(...)):
                 f"  Comparing with {valid_doc.get('filename', 'Unknown')} - Distance: {distance}"
             )
 
-            if distance <= 25 and distance < min_distance:
+            if distance <= 60 and distance < min_distance:
                 min_distance = distance
                 matched_doc = valid_doc
                 logger.info(f"  ✅ Match found! Distance: {distance}")
