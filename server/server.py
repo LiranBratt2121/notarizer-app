@@ -1,9 +1,6 @@
 # server.py
 # FastAPI + MongoDB Image Validation Server with Difference Visualization
 # Uses ONLY PIL/Pillow - NO OpenCV required!
-#
-# Dependencies:
-# pip install fastapi uvicorn pillow python-dotenv motor imagehash numpy
 
 import io
 import os
@@ -36,6 +33,8 @@ MONGO_DETAILS = os.getenv(
 DATABASE_NAME = "image_validation_db"
 COLLECTION_NAME = "valid_images"
 HASH_SIZE = 16
+# **FIX 1 CONFIG:** Calculate the correct maximum possible Hamming distance.
+MAX_DISTANCE = HASH_SIZE * HASH_SIZE # 16 * 16 = 256
 
 # --- Initialize MongoDB ---
 logger.info("🔌 Connecting to MongoDB...")
@@ -56,7 +55,7 @@ app.add_middleware(
 logger.info("✅ Server initialized successfully")
 
 
-# --- Computer Vision Function ---
+# --- Computer Vision Function (Unchanged) ---
 def get_document_bounds_cv(image: Image.Image, black_threshold=15) -> tuple:
     """Uses classic CV to find the largest non-black area in the center."""
 
@@ -103,33 +102,25 @@ def get_document_bounds_cv(image: Image.Image, black_threshold=15) -> tuple:
     return (x1, y1, x2, y2)
 
 
-import numpy as np
-import io
-import base64
-from PIL import Image, ImageDraw, ImageFont
-import logging
-
-# Set up a basic logger to replace the placeholders
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-
 def create_difference_visualization(
     img1_pil: Image.Image, img2_pil: Image.Image
 ) -> str:
     """
     Create a side-by-side comparison with difference overlay using ONLY PIL.
-    The third image displays a clear Green/Red heatmap:
-    - Green: Valid (matched) areas.
-    - Red: Non-valid (different) areas.
+    Note: img1_pil and img2_pil MUST have the exact same dimensions.
     Returns base64 encoded comparison image.
     """
     logger.info("🎨 Creating difference visualization (Green/Red Heatmap)...")
 
     # --- 1. Preparation and Resizing ---
-    target_width = 600  # Smaller to reduce payload
-    aspect_ratio = img1_pil.height / img1_pil.width
-    target_height = int(target_width * aspect_ratio)
+    # **NOTE:** img1_pil and img2_pil must already be size-aligned before calling this function.
+    target_width = 600
+    if img1_pil.width > 0:
+        aspect_ratio = img1_pil.height / img1_pil.width
+        target_height = int(target_width * aspect_ratio)
+    else:
+        logger.error("Error: Input image has zero width.")
+        return ""
 
     img1_resized = img1_pil.resize(
         (target_width, target_height), Image.Resampling.LANCZOS
@@ -163,7 +154,7 @@ def create_difference_visualization(
     # Apply Red to the areas that are different (where diff_mask is True)
     heatmap_np[diff_mask] = [255, 0, 0]  # Red for non-valid parts
 
-    # Apply a light blend with the original image to keep context (optional)
+    # Apply a light blend with the original image to keep context
     # Blending 20% original image with 80% heatmap mask
     blended_heatmap = (img1_np * 0.2 + heatmap_np * 0.8).astype(np.uint8)
 
@@ -179,12 +170,11 @@ def create_difference_visualization(
     comparison.paste(img2_resized, (target_width, 0))
     comparison.paste(
         Image.fromarray(blended_heatmap), (target_width * 2, 0)
-    )  # Use the new heatmap
+    )
 
     # --- 5. Add Text Labels ---
     draw = ImageDraw.Draw(comparison)
 
-    # Try to use a better font, fallback to default
     try:
         font = ImageFont.truetype("arial.ttf", 24)
     except:
@@ -193,14 +183,12 @@ def create_difference_visualization(
     labels = [
         ("Your Screenshot", 10),
         ("Database Image", target_width + 10),
-        ("Match/Diff Heatmap", target_width * 2 + 10),  # Updated label
+        ("Match/Diff Heatmap", target_width * 2 + 10),
     ]
 
     for label_text, x_pos in labels:
-        # Get text bbox
         bbox = draw.textbbox((x_pos, 10), label_text, font=font)
 
-        # Draw white background rectangle
         draw.rectangle(
             [(bbox[0] - 5, bbox[1] - 5), (bbox[2] + 5, bbox[3] + 5)],
             fill=(255, 255, 255),
@@ -208,7 +196,6 @@ def create_difference_visualization(
             width=2,
         )
 
-        # Draw text
         draw.text((x_pos, 10), label_text, fill=(0, 0, 0), font=font)
 
     # --- 6. Convert to base64 ---
@@ -220,7 +207,7 @@ def create_difference_visualization(
     return img_base64
 
 
-# --- Health Check Route ---
+# --- Health Check Route (Unchanged) ---
 @app.get("/")
 async def root():
     """Health check endpoint"""
@@ -232,7 +219,7 @@ async def root():
     }
 
 
-# --- Validation Route ---
+# --- Validation Route (Updated for Fixes) ---
 @app.post("/validate-image")
 async def validate_image(file: UploadFile = File(...)):
     """Check if uploaded image matches any previously stored valid image."""
@@ -277,13 +264,13 @@ async def validate_image(file: UploadFile = File(...)):
             distance = hash_to_check - known_hash
 
             logger.info(
-                f"  Comparing with {valid_doc.get('filename', 'Unknown')} - Distance: {distance}"
+                f"  Comparing with {valid_doc.get('filename', 'Unknown')} - Distance: {distance}"
             )
 
             if distance <= 60 and distance < min_distance:
                 min_distance = distance
                 matched_doc = valid_doc
-                logger.info(f"  ✅ Match found! Distance: {distance}")
+                logger.info(f"  ✅ Match found! Distance: {distance}")
 
         logger.info(f"🔢 Total documents checked: {checked_count}")
 
@@ -299,28 +286,36 @@ async def validate_image(file: UploadFile = File(...)):
                 stored_image_data = base64.b64decode(matched_doc.get("image_data", ""))
                 stored_image = Image.open(io.BytesIO(stored_image_data)).convert("RGB")
 
+                # **FIX 2:** Align stored image size to the cropped input size for accurate comparison
+                if stored_image.size != cropped.size:
+                    stored_image_aligned = stored_image.resize(cropped.size, Image.Resampling.LANCZOS)
+                else:
+                    stored_image_aligned = stored_image
+                
                 # Create comparison visualization
                 diff_image_base64 = create_difference_visualization(
-                    cropped, stored_image
+                    cropped, stored_image_aligned
                 )
 
             except Exception as e:
                 logger.error(f"❌ Error creating diff visualization: {str(e)}")
                 diff_image_base64 = None
-
+            
+            # **FIX 1:** Corrected Confidence Calculation using MAX_DISTANCE (256)
+            confidence_value = round((1 - min_distance / MAX_DISTANCE) * 100, 2)
+            
             return JSONResponse(
                 content={
                     "is_valid": True,
                     "approved": True,
                     "match_found": True,
                     "matched_filename": matched_doc.get("filename", "Unknown"),
-                    "confidence": round((1 - min_distance / 10) * 100, 2),
+                    "confidence": confidence_value, # Use the corrected value
                     "message": "✅ Image verified! This matches an approved document.",
                     "matched_at": datetime.now().isoformat(),
                     "distance": int(min_distance),
                     "comparison_image": diff_image_base64,
-                    "original_screenshot": base64.b64encode(contents).decode("utf-8"),
-                    "database_image": matched_doc.get("image_data", None),
+                    # Removed unnecessary base64 return fields (original_screenshot, database_image)
                 }
             )
         else:
@@ -341,7 +336,7 @@ async def validate_image(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-# --- Add Valid Image Route ---
+# --- Add Valid Image Route (Unchanged) ---
 @app.post("/add-valid-image")
 async def add_valid_image(file: UploadFile = File(...)):
     """Store an image (as base64) and its perceptual hash in MongoDB as a valid reference."""
@@ -412,7 +407,7 @@ async def add_valid_image(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-# --- Get All Valid Images Route ---
+# --- Get All Valid Images Route (Unchanged) ---
 @app.get("/valid-images")
 async def get_valid_images():
     """Retrieve all valid images from database (without full image data for performance)"""
@@ -433,7 +428,7 @@ async def get_valid_images():
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-# --- Startup Event ---
+# --- Startup Event (Unchanged) ---
 @app.on_event("startup")
 async def startup_event():
     logger.info("🚀 Server starting up...")
@@ -448,8 +443,3 @@ async def startup_event():
 
     except Exception as e:
         logger.error(f"❌ Startup error: {str(e)}", exc_info=True)
-
-
-# --- Run Command ---
-# NO OpenCV needed! Only: pip install fastapi uvicorn pillow python-dotenv motor imagehash numpy
-# uvicorn server:app --host 0.0.0.0 --port 8000 --reload
